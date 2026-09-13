@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": "dist-test", "rootDir": "." },
+  "include": ["src/protocol.ts", "src/ipc.ts", "src/freshness.ts", "test/**/*.ts"]
+}

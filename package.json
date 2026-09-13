@@ -1,0 +1,38 @@
+{
+  "name": "vscode-live-bridge",
+  "displayName": "VS Code Live Bridge",
+  "description": "Local filesystem bridge for reading and editing live VS Code buffers from external tools.",
+  "version": "0.1.0",
+  "publisher": "luke-m-selway",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/luke-m-selway/vscode-live-bridge.git" },
+  "private": true,
+  "engines": { "vscode": "^1.99.0" },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "bin": { "vscode-live-bridge": "./dist/cli.js" },
+  "files": ["dist/**", "README.md", "docs/protocol.md", "LICENSE"],
+  "activationEvents": ["onStartupFinished", "onCommand:vscodeLiveBridge.enable", "onCommand:vscodeLiveBridge.disable", "onCommand:vscodeLiveBridge.status", "onCommand:vscodeLiveBridge.showLog"],
+  "contributes": {
+    "commands": [
+      { "command": "vscodeLiveBridge.enable", "title": "VS Code Live Bridge: Enable" },
+      { "command": "vscodeLiveBridge.disable", "title": "VS Code Live Bridge: Disable" },
+      { "command": "vscodeLiveBridge.status", "title": "VS Code Live Bridge: Status" },
+      { "command": "vscodeLiveBridge.showLog", "title": "VS Code Live Bridge: Show Log" }
+    ]
+  },
+  "scripts": {
+    "clean": "rm -rf dist dist-test *.vsix",
+    "compile": "tsc -p tsconfig.json",
+    "test": "npm run test:unit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "package": "npm run compile && vsce package --no-dependencies",
+    "install-cli": "node scripts/install-cli.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.9.2"
+  }
+}
