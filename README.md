@@ -73,7 +73,7 @@ Every edit must carry the snapshot it was based on. A changed document version/h
 
 The bridge never auto-merges stale edits. The caller must reread and decide how to retry.
 
-No bridge operation saves a document. Edits therefore remain dirty and participate in normal VS Code Undo through `workspace.applyEdit`.
+No bridge operation saves a document. Edits therefore remain dirty and participate in normal VS Code Undo through VS Code edit APIs.
 
 ## Security
 
@@ -103,7 +103,7 @@ The extension-host suite covers live unsaved text reads, in-place text edits and
 
 ## External-agent integration
 
-External tools need only shell access to the CLI and must follow a read → reason → edit flow. They should treat exit code `3` / `STALE_SNAPSHOT` as a required reread, never as permission to force an overwrite. Day Shift or Goose integration should document when to call this CLI and how to surface conflicts; no integration logic belongs in this repository.
+External tools need only shell access to the CLI and must follow a read → reason → edit flow. They should treat exit code `3` / `STALE_SNAPSHOT` as a required reread, never as permission to force an overwrite. The canonical agent operating procedure is [`.agents/skills/vscode-live-bridge/SKILL.md`](.agents/skills/vscode-live-bridge/SKILL.md); the exact request/response contract remains owned by [`docs/protocol.md`](docs/protocol.md). Day Shift or Goose integration should point to that skill rather than duplicating bridge rules; no integration logic belongs in this repository.
 
 ## Current limitation
 
