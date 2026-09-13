@@ -12,6 +12,9 @@ test('IPC directories and atomic JSON writes work', async () => {
   const file = path.join(paths.requests, 'x.json');
   await atomicWriteJson(file, { ok: true });
   assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), { ok: true });
-  const mode = (await fs.stat(root)).mode & 0o777;
-  if (process.platform !== 'win32') assert.equal(mode, 0o700);
+  if (process.platform !== 'win32') {
+    for (const dir of [paths.root, paths.requests, paths.responses, paths.logs, paths.state]) {
+      assert.equal((await fs.stat(dir)).mode & 0o777, 0o700);
+    }
+  }
 });
