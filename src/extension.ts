@@ -114,9 +114,16 @@ async function applyText(req: BridgeRequest): Promise<BridgeResponse> {
   const start = startRaw === undefined ? 0 : Number(startRaw);
   const end = endRaw === undefined ? current.length : Number(endRaw);
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > current.length) return response(req.id, 'error', 'INVALID_RANGE');
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(doc.uri, new vscode.Range(doc.positionAt(start), doc.positionAt(end)), next);
-  if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  const range = new vscode.Range(doc.positionAt(start), doc.positionAt(end));
+  const visibleEditor = vscode.window.visibleTextEditors.find(editor => editor.document === doc);
+  if (visibleEditor) {
+    const applied = await visibleEditor.edit(builder => builder.replace(range, next), { undoStopBefore: true, undoStopAfter: true });
+    if (!applied) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  } else {
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, range, next);
+    if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  }
   return response(req.id, 'ok', undefined, textSnapshot(doc));
 }
 
@@ -127,9 +134,17 @@ async function replaceCell(req: BridgeRequest): Promise<BridgeResponse> {
   const next = req.params?.text;
   if (typeof next !== 'string') return response(req.id, 'error', 'TEXT_REQUIRED');
   const cell = found.cell;
+  const index = notebook.getCells().indexOf(cell);
+  const stableId = cellId(cell);
+  const data = new vscode.NotebookCellData(cell.kind, next, cell.document.languageId);
+  data.metadata = cell.metadata;
+  data.outputs = [...cell.outputs];
+  data.executionSummary = cell.executionSummary;
   const edit = new vscode.WorkspaceEdit();
-  edit.replace(cell.document.uri, new vscode.Range(cell.document.positionAt(0), cell.document.positionAt(cell.document.getText().length)), next);
+  edit.set(notebook.uri, [vscode.NotebookEdit.replaceCells(new vscode.NotebookRange(index, index + 1), [data])]);
   if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  const replacement = notebook.cellAt(index);
+  cellIds.set(replacement, stableId);
   return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
 }
 
@@ -256,7 +271,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const enabled = context.globalState.get<boolean>(ENABLED_KEY, false);
       void vscode.window.showInformationMessage(`VS Code Live Bridge: ${enabled ? 'enabled' : 'disabled'}; workspace ${vscode.workspace.isTrusted ? 'trusted' : 'untrusted'}.`);
     }),
-    vscode.commands.registerCommand('vscodeLiveBridge.showLog', () => output.show(true))
+    vscode.commands.registerCommand('vscodeLiveBridge.showLog', async () => {
+      const logFile = path.join(paths.logs, 'bridge.log');
+      await fs.appendFile(logFile, '', { encoding: 'utf8', mode: 0o600 });
+      const logDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(logFile));
+      await vscode.window.showTextDocument(logDocument, { preview: true });
+    })
   );
 
   requestWatcher = watchFs(paths.requests, () => { void processRequests(context); });

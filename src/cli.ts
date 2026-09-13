@@ -69,6 +69,7 @@ async function send(req: BridgeRequest, timeoutMs: number): Promise<BridgeRespon
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   }
+  await fs.unlink(requestFile).catch(() => undefined);
   return { protocolVersion: PROTOCOL_VERSION, id: req.id, status: 'unavailable', reason: 'NO_EXTENSION_RESPONSE' };
 }
 
