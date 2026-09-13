@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-test/
+dist-vscode-test/
+.vscode-test/
 *.vsix
 .DS_Store
 

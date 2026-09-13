@@ -33,11 +33,11 @@ Any mismatch returns `status: conflict` with `reason: STALE_SNAPSHOT`. Missing e
 - `list` reports live file-backed text documents and notebooks.
 - `readText` and `readNotebook` return live snapshots.
 - `replaceText` replaces a UTF-16 offset range or the complete text.
-- `replaceCell` changes an existing live notebook cell source.
+- `replaceCell` replaces one live notebook cell through `NotebookEdit.replaceCells`, preserving its metadata, outputs, execution summary, and bridge session cell ID.
 - `insertCell` inserts a code or Markdown cell before or after a fresh reference cell.
 - `deleteCell` deletes a fresh target cell.
 
-All edits use VS Code edit APIs and remain unsaved. The protocol provides no save, process execution, network, model, Git, or notebook-execution operation.
+All edits use VS Code edit APIs and remain unsaved. Visible text edits receive explicit undo stops; notebook edits participate in the notebook undo stack. The protocol provides no save, process execution, network, model, Git, or notebook-execution operation.
 
 ## Target policy
 

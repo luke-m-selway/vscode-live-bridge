@@ -63,7 +63,7 @@ vscode-live-bridge delete-cell notebook.ipynb \
 
 ## Live-buffer and conflict semantics
 
-Reads come from `workspace.textDocuments` and `workspace.notebookDocuments`, so unsaved user edits are visible. Existing cell source is changed through the cell's live `TextDocument`; insertion/deletion uses `NotebookEdit`. The extension never rewrites an open `.ipynb` file as JSON.
+Reads come from `workspace.textDocuments` and `workspace.notebookDocuments`, so unsaved user edits are visible. Visible text editors use `TextEditor.edit` with explicit undo stops; other eligible text documents use `WorkspaceEdit`. Notebook source replacement, insertion, and deletion use `NotebookEdit` transactions, and source replacement preserves the cell's metadata, outputs, execution summary, and bridge session ID. The extension never rewrites an open `.ipynb` file as JSON.
 
 Every edit must carry the snapshot it was based on. A changed document version/hash, notebook version, cell ID, cell hash, or cell document version returns:
 
@@ -94,6 +94,12 @@ code --uninstall-extension luke-m-selway.vscode-live-bridge
 rm -f ~/.local/bin/vscode-live-bridge
 rm -rf ~/.vscode-live-bridge
 ```
+
+## Tests
+
+`npm test` runs deterministic protocol, IPC-permission, hash, and freshness tests. `npm run test:vscode` runs the end-to-end acceptance suite in an isolated VS Code Extension Development Host and requires the VS Code Jupyter extension to be installed locally so the runner can expose its notebook serializer.
+
+The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook reads, cell replacement and Undo, same-cell cooperative editing, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
 
 ## External-agent integration
 

@@ -22,16 +22,18 @@
     ]
   },
   "scripts": {
-    "clean": "rm -rf dist dist-test *.vsix",
+    "clean": "rm -rf dist dist-test dist-vscode-test *.vsix",
     "compile": "tsc -p tsconfig.json",
     "test": "npm run test:unit",
-    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test:unit": "npm run compile && tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test:vscode": "npm run compile && tsc -p tsconfig.vscode-test.json && node test/vscode/runTest.mjs",
     "package": "npm run compile && vsce package --no-dependencies",
     "install-cli": "node scripts/install-cli.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.99.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.6.0",
     "typescript": "^5.9.2"
   }
