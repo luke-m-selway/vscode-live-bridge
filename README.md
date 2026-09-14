@@ -4,6 +4,16 @@ A local, agent-agnostic bridge for reading and editing the live in-memory state 
 
 The VS Code extension owns editor state and applies edits through VS Code APIs. The `vscode-live-bridge` CLI writes local filesystem requests to `~/.vscode-live-bridge/` and waits for responses. Protocol details are defined in [`docs/protocol.md`](docs/protocol.md).
 
+> **Status:** early public release. The source is public, but the extension and CLI are not currently published to the VS Code Marketplace or npm. Build the local VSIX and CLI from source. The npm package is intentionally marked `private` to prevent accidental publication.
+
+VS Code is a Microsoft product. This project is independent and is not affiliated with or endorsed by Microsoft.
+
+## Requirements
+
+- VS Code 1.99 or newer.
+- Node.js 18 or newer for building and for the standalone CLI.
+- A trusted VS Code workspace for editor operations.
+
 ## Install
 
 ```sh
@@ -79,7 +89,9 @@ No bridge operation saves a document. Edits therefore remain dirty and participa
 
 The bridge has no network listener, telemetry, cloud dependency, API key, model invocation, shell execution, or arbitrary command operation. The IPC root is created with user-only permissions where the platform supports POSIX modes. Targets must either belong to the current trusted workspace or already be open in VS Code. When the bridge is disabled, non-status requests are rejected.
 
-Request logs at `~/.vscode-live-bridge/logs/bridge.log` contain only request ID, timestamp, target, operation, outcome, and error reason; document contents are not logged.
+The bridge is a **same-user local IPC** mechanism: any process already running as the same operating-system user may be able to submit requests while the bridge is enabled. Only enable it in workspaces and local environments you trust. Request logs at `~/.vscode-live-bridge/logs/bridge.log` contain file paths and request metadata, but not document contents.
+
+See [`SECURITY.md`](SECURITY.md) for the trust model and vulnerability reporting guidance.
 
 ## Troubleshooting and control
 
@@ -101,10 +113,18 @@ rm -rf ~/.vscode-live-bridge
 
 The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook reads, cell replacement and Undo, same-cell cooperative editing, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
 
-## External-agent integration
+## External-tool integration
 
-External tools need only shell access to the CLI and must follow a read → reason → edit flow. They should treat exit code `3` / `STALE_SNAPSHOT` as a required reread, never as permission to force an overwrite. The canonical agent operating procedure is [`.agents/skills/vscode-live-bridge/SKILL.md`](.agents/skills/vscode-live-bridge/SKILL.md); the exact request/response contract remains owned by [`docs/protocol.md`](docs/protocol.md). Day Shift or Goose integration should point to that skill rather than duplicating bridge rules; no integration logic belongs in this repository.
+External tools need only shell access to the CLI and must follow a read → reason → edit flow. They should treat exit code `3` / `STALE_SNAPSHOT` as a required reread, never as permission to force an overwrite. The canonical operating procedure is [`.agents/skills/vscode-live-bridge/SKILL.md`](.agents/skills/vscode-live-bridge/SKILL.md); the exact request/response contract remains owned by [`docs/protocol.md`](docs/protocol.md). Downstream integrations should point to those sources rather than duplicating bridge rules.
 
 ## Current limitation
 
 The MVP assumes a single enabled VS Code extension host owns a given `~/.vscode-live-bridge/` request queue. Running multiple enabled VS Code windows against the same queue is not yet coordinated.
+
+## Contributing
+
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the small set of safety and validation requirements.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE). Third-party development and test dependencies remain under their respective licenses and are not vendored into this repository.
