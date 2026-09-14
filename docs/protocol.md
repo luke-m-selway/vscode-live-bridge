@@ -17,6 +17,8 @@ Text reads return URI, language ID, document version, dirty state, complete text
 
 Notebook reads return URI, notebook version, dirty state, and ordered cells. Each cell includes a session-stable cell ID, current index, kind, language ID, cell document version, source, and SHA-256 hash. Cell IDs are not persisted into the notebook file.
 
+After a successful notebook mutation, the extension waits for a short bounded quiescence period in notebook change events before capturing the returned snapshot. That stabilized success snapshot may be used as the freshness basis for an immediate chained notebook operation; any later user/editor change still invalidates it normally.
+
 ## Freshness
 
 `replaceText` requires the text document version and hash from the prior read.

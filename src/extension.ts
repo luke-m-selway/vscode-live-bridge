@@ -7,11 +7,43 @@ import { BridgeRequest, BridgeResponse, isBridgeRequest, PROTOCOL_VERSION, sha25
 import { checkCellFreshness, checkTextFreshness } from './freshness';
 
 const ENABLED_KEY = 'vscodeLiveBridge.enabled';
+// Notebook providers can emit follow-up version changes after applyEdit resolves.
+const NOTEBOOK_SETTLE_QUIET_MS = 150;
+const NOTEBOOK_SETTLE_TIMEOUT_MS = 1500;
 const cellIds = new WeakMap<vscode.NotebookCell, string>();
 let requestWatcher: FSWatcher | undefined;
 let fallbackTimer: NodeJS.Timeout | undefined;
 let processing = false;
 let output: vscode.OutputChannel;
+
+async function waitForNotebookQuiescence(notebook: vscode.NotebookDocument): Promise<void> {
+  await new Promise<void>(resolve => {
+    let settled = false;
+    let quietTimer: NodeJS.Timeout | undefined;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    let listener: vscode.Disposable | undefined;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (quietTimer) clearTimeout(quietTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      listener?.dispose();
+      resolve();
+    };
+
+    const armQuietTimer = () => {
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, NOTEBOOK_SETTLE_QUIET_MS);
+    };
+
+    listener = vscode.workspace.onDidChangeNotebookDocument(event => {
+      if (event.notebook === notebook) armQuietTimer();
+    });
+    timeoutTimer = setTimeout(finish, NOTEBOOK_SETTLE_TIMEOUT_MS);
+    armQuietTimer();
+  });
+}
 
 function cellId(cell: vscode.NotebookCell): string {
   let id = cellIds.get(cell);
@@ -145,6 +177,7 @@ async function replaceCell(req: BridgeRequest): Promise<BridgeResponse> {
   if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
   const replacement = notebook.cellAt(index);
   cellIds.set(replacement, stableId);
+  await waitForNotebookQuiescence(notebook);
   return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
 }
 
@@ -164,6 +197,7 @@ async function insertCell(req: BridgeRequest): Promise<BridgeResponse> {
   const edit = new vscode.WorkspaceEdit();
   edit.set(notebook.uri, [vscode.NotebookEdit.insertCells(index + (position === 'after' ? 1 : 0), [data])]);
   if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  await waitForNotebookQuiescence(notebook);
   return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
 }
 
@@ -175,6 +209,7 @@ async function deleteCell(req: BridgeRequest): Promise<BridgeResponse> {
   const edit = new vscode.WorkspaceEdit();
   edit.set(notebook.uri, [vscode.NotebookEdit.deleteCells(new vscode.NotebookRange(index, index + 1))]);
   if (!await vscode.workspace.applyEdit(edit)) return response(req.id, 'error', 'APPLY_EDIT_FAILED');
+  await waitForNotebookQuiescence(notebook);
   return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
 }
 
