@@ -25,7 +25,7 @@ Always obtain a fresh live snapshot before constructing an edit.
 
 - For text, use `read` and retain the returned document `version` and `hash`.
 - For notebooks, use `read-notebook` and identify the target by the returned session-stable `cellId`, not by index alone.
-- Treat snapshot values as the basis for one edit decision. After any successful edit, reread before constructing the next dependent edit because versions and hashes may have changed.
+- Treat snapshot values as the basis for one edit decision. For notebook `replace-cell`, `insert-cell`, and `delete-cell`, a successful response contains a stabilized post-edit snapshot that may be used directly for the immediate next chained notebook edit if the intended change is still valid. Reread whenever time/user activity intervenes or the next decision needs semantic reconciliation beyond that returned snapshot.
 - Notebook cell IDs are only stable for the current open VS Code session. Never persist them as durable notebook identifiers or assume they survive reload/reopen.
 
 ## Freshness requirements
@@ -56,7 +56,7 @@ Never force-overwrite, bypass freshness checks, or reconstruct a request with in
 
 Use the bridge notebook operations for live notebook changes. Do not rewrite an open `.ipynb` file as JSON to emulate a cell edit.
 
-The extension applies cell replacement, insertion, and deletion through VS Code notebook edit APIs. Bridge edits remain unsaved, preserve the normal dirty state, and participate in VS Code Undo. Cell replacement preserves bridge-relevant cell identity plus notebook metadata/outputs/execution summary as defined by the implementation.
+The extension applies cell replacement, insertion, and deletion through VS Code notebook edit APIs. Bridge edits remain unsaved, preserve the normal dirty state, and participate in VS Code Undo. Cell replacement preserves bridge-relevant cell identity plus notebook metadata/outputs/execution summary as defined by the implementation. After each successful notebook mutation, the bridge waits briefly for provider-driven version changes to quiesce before returning its post-edit snapshot.
 
 The bridge does not execute cells, run a kernel, save notebooks, or expose a general command/shell channel. Do not add those behaviors in a downstream integration.
 

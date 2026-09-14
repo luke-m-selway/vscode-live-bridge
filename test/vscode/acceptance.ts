@@ -173,6 +173,63 @@ export async function run(): Promise<void> {
 
   cli = await runCli(['read-notebook', notebookPath]);
   notebookSnap = cli.response.result;
+  const chainRef = notebookSnap.cells[0];
+  let delayedSettleScheduled = false;
+  const settleProbe = vscode.workspace.onDidChangeNotebookDocument(event => {
+    if (event.notebook !== notebook || delayedSettleScheduled) return;
+    delayedSettleScheduled = true;
+    setTimeout(() => {
+      const followup = new vscode.WorkspaceEdit();
+      followup.set(notebook.uri, [vscode.NotebookEdit.updateNotebookMetadata({
+        ...notebook.metadata,
+        bridgeAcceptanceSettleProbe: true
+      })]);
+      void vscode.workspace.applyEdit(followup);
+    }, 25);
+  });
+  cli = await runCli([
+    'insert-cell', notebookPath,
+    '--notebook-version', String(notebookSnap.version),
+    '--cell-id', chainRef.cellId,
+    '--cell-hash', chainRef.hash,
+    '--kind', 'code', '--position', 'after', '--text', 'chain = 1'
+  ]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  const afterInsert = cli.response.result;
+  await sleep(75);
+  settleProbe.dispose();
+  assert.equal(delayedSettleScheduled, true);
+  const inserted = afterInsert.cells.find((cell: any) => cell.source === 'chain = 1');
+  assert.ok(inserted);
+
+  cli = await runCli([
+    'replace-cell', notebookPath,
+    '--notebook-version', String(afterInsert.version),
+    '--cell-id', inserted.cellId,
+    '--cell-hash', inserted.hash,
+    '--document-version', String(inserted.documentVersion),
+    '--text', 'chain = 2'
+  ]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  const afterReplace = cli.response.result;
+  const replaced = afterReplace.cells.find((cell: any) => cell.cellId === inserted.cellId);
+  assert.ok(replaced);
+  assert.equal(replaced.source, 'chain = 2');
+
+  cli = await runCli([
+    'delete-cell', notebookPath,
+    '--notebook-version', String(afterReplace.version),
+    '--cell-id', replaced.cellId,
+    '--cell-hash', replaced.hash
+  ]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  assert.equal(cli.response.result.cells.some((cell: any) => cell.source === 'chain = 2'), false);
+
+  cli = await runCli(['read-notebook', notebookPath]);
+  notebookSnap = cli.response.result;
   const insertRef = notebookSnap.cells[0];
   const beforeInsertCount = notebook.cellCount;
   cli = await runCli([
