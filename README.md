@@ -37,7 +37,10 @@ vscode-live-bridge status
 vscode-live-bridge list
 vscode-live-bridge read path/to/file.md
 vscode-live-bridge read-notebook path/to/notebook.ipynb
+vscode-live-bridge read-notebook path/to/notebook.ipynb --include-outputs
 ```
+
+`read-notebook --include-outputs` adds the current live code-cell outputs and execution summary without executing cells. Output transport is bounded; inspect the top-level `outputRead.truncated` field before assuming the returned outputs are complete. Exact output fields and limits are defined in [`docs/protocol.md`](docs/protocol.md).
 
 Text edits require the `version` and `hash` returned by the preceding read:
 
@@ -111,7 +114,7 @@ rm -rf ~/.vscode-live-bridge
 
 `npm test` runs deterministic protocol, IPC-permission, hash, and freshness tests. `npm run test:vscode` runs the end-to-end acceptance suite in an isolated VS Code Extension Development Host and requires the VS Code Jupyter extension to be installed locally so the runner can expose its notebook serializer.
 
-The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook reads, cell replacement and Undo, chained notebook edits from returned stabilized snapshots, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
+The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook source/output reads, cell replacement and Undo, chained notebook edits from returned stabilized snapshots, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
 
 ## External-tool integration
 

@@ -15,7 +15,9 @@ The default IPC root is `~/.vscode-live-bridge/` with `requests/`, `responses/`,
 
 Text reads return URI, language ID, document version, dirty state, complete text, and SHA-256 hash.
 
-Notebook reads return URI, notebook version, dirty state, and ordered cells. Each cell includes a session-stable cell ID, current index, kind, language ID, cell document version, source, and SHA-256 hash. Cell IDs are not persisted into the notebook file.
+Notebook reads return URI, notebook version, dirty state, and ordered cells. Each cell includes a session-stable cell ID, current index, kind, language ID, cell document version, source, and SHA-256 hash. Cell IDs are not persisted into the notebook file. By default `readNotebook` remains source-only. With `params.includeOutputs: true`, code cells also include the current in-memory output groups and execution summary exposed by VS Code; the bridge does not execute cells to obtain them.
+
+Included output groups preserve group metadata and item order. Each represented item reports MIME type and raw `byteLength`; textual/JSON/XML/SVG and VS Code stdout/stderr/error MIME data use UTF-8, while other binary MIME data use base64. One notebook read shares limits of 1 MiB raw included output bytes, 100 output groups, and 100 output items. Items whose payload cannot fit the byte limit are represented with `omitted: true` and `reason: OUTPUT_LIMIT_EXCEEDED` where the item record itself still fits the item/group caps. The top-level `outputRead` summary reports the limits plus included/omitted byte, item, and group counts and `truncated`, so clients can distinguish no outputs from bounded omission.
 
 After a successful notebook mutation, the extension waits for a short bounded quiescence period in notebook change events before capturing the returned snapshot. That stabilized success snapshot may be used as the freshness basis for an immediate chained notebook operation; any later user/editor change still invalidates it normally.
 
@@ -33,7 +35,7 @@ Any mismatch returns `status: conflict` with `reason: STALE_SNAPSHOT`. Missing e
 
 - `status` reports enabled/trusted state and IPC root.
 - `list` reports live file-backed text documents and notebooks.
-- `readText` and `readNotebook` return live snapshots.
+- `readText` and `readNotebook` return live snapshots; `readNotebook` can opt into bounded live output inspection with `includeOutputs`.
 - `replaceText` replaces a UTF-16 offset range or the complete text.
 - `replaceCell` replaces one live notebook cell through `NotebookEdit.replaceCells`, preserving its metadata, outputs, execution summary, and bridge session cell ID.
 - `insertCell` inserts a code or Markdown cell before or after a fresh reference cell.

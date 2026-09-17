@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "outDir": "dist-test", "rootDir": "." },
-  "include": ["src/protocol.ts", "src/ipc.ts", "src/freshness.ts", "test/*.test.ts"]
+  "include": ["src/protocol.ts", "src/ipc.ts", "src/freshness.ts", "src/notebookOutputs.ts", "test/*.test.ts"]
 }

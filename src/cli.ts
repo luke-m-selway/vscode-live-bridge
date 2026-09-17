@@ -10,6 +10,8 @@ function die(message: string, code = 2): never {
   process.exit(code);
 }
 
+const BOOLEAN_FLAGS = new Set(['include-outputs']);
+
 function parseArgs(argv: string[]) {
   const command = argv[0];
   const positional: string[] = [];
@@ -21,7 +23,8 @@ function parseArgs(argv: string[]) {
       if (eq > 2) flags[arg.slice(2, eq)] = arg.slice(eq + 1);
       else {
         const name = arg.slice(2);
-        if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) flags[name] = argv[++i];
+        if (BOOLEAN_FLAGS.has(name)) flags[name] = true;
+        else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) flags[name] = argv[++i];
         else flags[name] = true;
       }
     } else positional.push(arg);
@@ -40,6 +43,13 @@ function num(flags: Record<string, string | boolean>, name: string): number | un
 function str(flags: Record<string, string | boolean>, name: string): string | undefined {
   const value = flags[name];
   return typeof value === 'string' ? value : undefined;
+}
+
+function bool(flags: Record<string, string | boolean>, name: string): boolean {
+  const value = flags[name];
+  if (value === undefined || value === false || value === 'false') return false;
+  if (value === true || value === 'true') return true;
+  die(`--${name} must be true or false`);
 }
 
 function expectation(flags: Record<string, string | boolean>) {
@@ -76,7 +86,10 @@ async function send(req: BridgeRequest, timeoutMs: number): Promise<BridgeRespon
 async function main(): Promise<void> {
   const { command, positional, flags } = parseArgs(process.argv.slice(2));
   if (!command || command === 'help' || command === '--help') {
-    process.stdout.write('vscode-live-bridge status|list|read|read-notebook|replace-text|replace-cell|insert-cell|delete-cell\n');
+    process.stdout.write([
+      'vscode-live-bridge status|list|read|read-notebook|replace-text|replace-cell|insert-cell|delete-cell',
+      'read-notebook <notebook> [--include-outputs]'
+    ].join('\n') + '\n');
     return;
   }
   const id = randomUUID();
@@ -91,7 +104,13 @@ async function main(): Promise<void> {
       req = { ...base, operation: 'readText', target }; break;
     case 'read-notebook':
       if (!target) die('read-notebook requires <notebook>');
-      req = { ...base, operation: 'readNotebook', target }; break;
+      req = {
+        ...base,
+        operation: 'readNotebook',
+        target,
+        ...(bool(flags, 'include-outputs') ? { params: { includeOutputs: true } } : {})
+      };
+      break;
     case 'replace-text': {
       if (!target) die('replace-text requires <document>');
       const text = str(flags, 'text'); if (text === undefined) die('replace-text requires --text');
