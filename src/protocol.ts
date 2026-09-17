@@ -20,6 +20,42 @@ export interface SnapshotExpectation {
   cellHash?: string;
 }
 
+export interface ReadNotebookParams {
+  includeOutputs?: boolean;
+}
+
+export interface NotebookOutputLimits {
+  rawBytes: number;
+  items: number;
+  groups: number;
+}
+
+export interface SerializedNotebookOutputItem {
+  mime: string;
+  byteLength: number;
+  encoding: 'utf8' | 'base64';
+  data?: string;
+  omitted?: true;
+  reason?: 'OUTPUT_LIMIT_EXCEEDED';
+}
+
+export interface SerializedNotebookOutputGroup {
+  items: SerializedNotebookOutputItem[];
+  metadata?: unknown;
+  omittedItems?: number;
+}
+
+export interface NotebookOutputReadSummary {
+  limits: NotebookOutputLimits;
+  rawBytesIncluded: number;
+  rawBytesOmitted: number;
+  itemsRepresented: number;
+  itemsOmitted: number;
+  groupsRepresented: number;
+  groupsOmitted: number;
+  truncated: boolean;
+}
+
 export interface BridgeRequest {
   protocolVersion: 1;
   id: string;

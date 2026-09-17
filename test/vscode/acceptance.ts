@@ -81,7 +81,10 @@ export async function run(): Promise<void> {
   assert.match(textDoc.getText(), /manual-unsaved/);
   assert.equal(textDoc.isDirty, true);
 
-  await vscode.window.showTextDocument(textDoc);
+  await vscode.window.showTextDocument(textDoc, { preserveFocus: false, preview: false });
+  // Undo is focus-sensitive; activation can leave auxiliary UI focused in the test host.
+  await vscode.commands.executeCommand('workbench.action.closePanel');
+  await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
   await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
   await sleep(300);
   await vscode.commands.executeCommand('undo');
@@ -106,6 +109,53 @@ export async function run(): Promise<void> {
   const notebook = await vscode.workspace.openNotebookDocument(vscode.Uri.file(notebookPath));
   await vscode.window.showNotebookDocument(notebook);
   assert.ok(notebook.cellCount >= 2);
+
+  const outputCell = notebook.cellAt(0);
+  const outputData = new vscode.NotebookCellData(outputCell.kind, outputCell.document.getText(), outputCell.document.languageId);
+  outputData.metadata = outputCell.metadata;
+  outputData.outputs = [
+    new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout('live stdout\n')]),
+    new vscode.NotebookCellOutput([
+      vscode.NotebookCellOutputItem.text('value\n42', 'text/plain'),
+      vscode.NotebookCellOutputItem.text('<table><tr><td>42</td></tr></table>', 'text/html')
+    ], { kind: 'table' }),
+    new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.error(new Error('live boom'))]),
+    new vscode.NotebookCellOutput([
+      new vscode.NotebookCellOutputItem(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), 'image/png')
+    ])
+  ];
+  outputData.executionSummary = { executionOrder: 7, success: false };
+  const outputEdit = new vscode.WorkspaceEdit();
+  outputEdit.set(notebook.uri, [vscode.NotebookEdit.replaceCells(new vscode.NotebookRange(0, 1), [outputData])]);
+  assert.equal(await vscode.workspace.applyEdit(outputEdit), true);
+  await sleep(100);
+  assert.equal(notebook.isDirty, true);
+  const outputVersion = notebook.version;
+  const outputDirty = notebook.isDirty;
+
+  cli = await runCli(['read-notebook', notebookPath]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  assert.equal(Object.hasOwn(cli.response.result.cells[0], 'outputs'), false);
+  assert.equal(Object.hasOwn(cli.response.result, 'outputRead'), false);
+
+  cli = await runCli(['read-notebook', notebookPath, '--include-outputs']);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  assert.equal(cli.response.result.version, outputVersion);
+  assert.equal(notebook.version, outputVersion);
+  assert.equal(notebook.isDirty, outputDirty);
+  assert.equal(cli.response.result.outputRead.truncated, false);
+  assert.equal(cli.response.result.cells[0].executionSummary.executionOrder, 7);
+  assert.equal(cli.response.result.cells[0].executionSummary.success, false);
+  assert.equal(cli.response.result.cells[0].outputs[0].items[0].data, 'live stdout\n');
+  assert.deepEqual(cli.response.result.cells[0].outputs[1].metadata, { kind: 'table' });
+  assert.equal(cli.response.result.cells[0].outputs[1].items[0].data, 'value\n42');
+  assert.match(cli.response.result.cells[0].outputs[1].items[1].data, /<table>/);
+  assert.match(cli.response.result.cells[0].outputs[2].items[0].data, /live boom/);
+  assert.equal(cli.response.result.cells[0].outputs[3].items[0].encoding, 'base64');
+  assert.equal(cli.response.result.cells[0].outputs[3].items[0].data, 'iVBORw==');
+
   const first = notebook.cellAt(0);
   await replaceLiveText(first.document, "print('manual')");
   assert.equal(notebook.isDirty, true);

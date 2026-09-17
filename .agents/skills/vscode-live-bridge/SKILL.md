@@ -24,7 +24,7 @@ Ordinary repository or filesystem tools remain appropriate when live VS Code sta
 Always obtain a fresh live snapshot before constructing an edit.
 
 - For text, use `read` and retain the returned document `version` and `hash`.
-- For notebooks, use `read-notebook` and identify the target by the returned session-stable `cellId`, not by index alone.
+- For notebooks, use `read-notebook` and identify the target by the returned session-stable `cellId`, not by index alone. When existing rendered/executed output matters, use `read-notebook --include-outputs`; this reads live VS Code output state and never executes cells. If `outputRead.truncated` is true, treat the output read as incomplete rather than inferring that omitted output is absent.
 - Treat snapshot values as the basis for one edit decision. For notebook `replace-cell`, `insert-cell`, and `delete-cell`, a successful response contains a stabilized post-edit snapshot that may be used directly for the immediate next chained notebook edit if the intended change is still valid. Reread whenever time/user activity intervenes or the next decision needs semantic reconciliation beyond that returned snapshot.
 - Notebook cell IDs are only stable for the current open VS Code session. Never persist them as durable notebook identifiers or assume they survive reload/reopen.
 

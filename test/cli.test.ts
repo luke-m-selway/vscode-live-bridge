@@ -17,6 +17,12 @@ async function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: n
   });
 }
 
+test('CLI help documents opt-in notebook output reads', async () => {
+  const result = await runCli(['--help'], process.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /read-notebook <notebook> \[--include-outputs\]/);
+});
+
 test('CLI timeout removes an unclaimed request instead of leaving a delayed edit queued', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vlb-cli-'));
   const result = await runCli(['status', '--timeout', '100'], { ...process.env, VSCODE_LIVE_BRIDGE_ROOT: root });
