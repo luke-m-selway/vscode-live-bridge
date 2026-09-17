@@ -3,8 +3,9 @@ import { promises as fs, watch as watchFs, FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { atomicWriteJson, bridgePaths, ensureBridgeDirs } from './ipc';
-import { BridgeRequest, BridgeResponse, isBridgeRequest, PROTOCOL_VERSION, sha256 } from './protocol';
+import { BridgeRequest, BridgeResponse, isBridgeRequest, PROTOCOL_VERSION, ReadNotebookParams, sha256 } from './protocol';
 import { checkCellFreshness, checkTextFreshness } from './freshness';
+import { createNotebookOutputBudget, notebookOutputSummary, serializeNotebookOutputGroups } from './notebookOutputs';
 
 const ENABLED_KEY = 'vscodeLiveBridge.enabled';
 // Notebook providers can emit follow-up version changes after applyEdit resolves.
@@ -91,14 +92,16 @@ function textSnapshot(doc: vscode.TextDocument) {
   return { uri: doc.uri.toString(), languageId: doc.languageId, version: doc.version, isDirty: doc.isDirty, text, hash: sha256(text) };
 }
 
-function notebookSnapshot(doc: vscode.NotebookDocument) {
-  return {
+function notebookSnapshot(doc: vscode.NotebookDocument, includeOutputs = false) {
+  const outputBudget = includeOutputs ? createNotebookOutputBudget() : undefined;
+  const snapshot = {
     uri: doc.uri.toString(),
     version: doc.version,
     isDirty: doc.isDirty,
     cells: doc.getCells().map((cell, index) => {
       const source = cell.document.getText();
-      return {
+      const isCode = cell.kind === vscode.NotebookCellKind.Code;
+      const base = {
         cellId: cellId(cell),
         index,
         kind: cell.kind === vscode.NotebookCellKind.Markup ? 'markdown' : 'code',
@@ -107,8 +110,28 @@ function notebookSnapshot(doc: vscode.NotebookDocument) {
         source,
         hash: sha256(source)
       };
+      if (!outputBudget || !isCode) return base;
+      const executionSummary = cell.executionSummary;
+      return {
+        ...base,
+        outputs: serializeNotebookOutputGroups(cell.outputs, outputBudget),
+        ...(executionSummary ? {
+          executionSummary: {
+            executionOrder: executionSummary.executionOrder,
+            success: executionSummary.success,
+            ...(executionSummary.timing ? {
+              timing: {
+                startTime: executionSummary.timing.startTime,
+                endTime: executionSummary.timing.endTime
+              }
+            } : {})
+          }
+        } : {})
+      };
     })
   };
+  if (!outputBudget) return snapshot;
+  return { ...snapshot, outputRead: notebookOutputSummary(outputBudget) };
 }
 
 function requireTextFresh(req: BridgeRequest, doc: vscode.TextDocument): BridgeResponse | undefined {
@@ -228,7 +251,7 @@ async function handle(req: BridgeRequest, context: vscode.ExtensionContext): Pro
     case 'list':
       return response(req.id, 'ok', undefined, {
         textDocuments: vscode.workspace.textDocuments.filter(d => d.uri.scheme === 'file').map(textSnapshot),
-        notebooks: vscode.workspace.notebookDocuments.map(notebookSnapshot)
+        notebooks: vscode.workspace.notebookDocuments.map(doc => notebookSnapshot(doc))
       });
     case 'readText': {
       if (!req.target) return response(req.id, 'error', 'TARGET_REQUIRED');
@@ -238,7 +261,11 @@ async function handle(req: BridgeRequest, context: vscode.ExtensionContext): Pro
     case 'readNotebook': {
       if (!req.target) return response(req.id, 'error', 'TARGET_REQUIRED');
       const uri = vscode.Uri.file(req.target); if (!isTargetAllowed(uri)) return response(req.id, 'error', 'TARGET_OUTSIDE_TRUSTED_WORKSPACE');
-      return response(req.id, 'ok', undefined, notebookSnapshot(await resolveNotebook(req.target)));
+      const params = req.params as ReadNotebookParams | undefined;
+      if (params?.includeOutputs !== undefined && typeof params.includeOutputs !== 'boolean') {
+        return response(req.id, 'error', 'INVALID_INCLUDE_OUTPUTS');
+      }
+      return response(req.id, 'ok', undefined, notebookSnapshot(await resolveNotebook(req.target), params?.includeOutputs === true));
     }
     case 'replaceText': return applyText(req);
     case 'replaceCell': return replaceCell(req);
