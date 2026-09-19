@@ -6,7 +6,7 @@ Keep changes small, generic, and consistent with the bridge's local-only safety 
 
 - Read [`docs/protocol.md`](docs/protocol.md) for the request/response contract.
 - Read [`.agents/skills/vscode-live-bridge/SKILL.md`](.agents/skills/vscode-live-bridge/SKILL.md) for the caller operating procedure.
-- Preserve read-before-edit freshness checks, trusted-workspace targeting, normal VS Code Undo, and the absence of network/model/shell execution features.
+- Preserve read-before-action freshness checks, trusted-workspace targeting, normal VS Code Undo, and the absence of general network/model/shell command features. Notebook execution must remain an explicit, snapshot-guarded Microsoft Jupyter operation on a selected live code cell; bridge code must never choose a kernel for the caller.
 - Do not bypass `STALE_SNAPSHOT` or add force-overwrite behavior.
 - Notebook edits must use VS Code notebook APIs rather than rewriting an open `.ipynb` file as JSON.
 

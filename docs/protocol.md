@@ -29,6 +29,8 @@ After a successful notebook mutation, the extension waits for a short bounded qu
 
 `insertCell` and `deleteCell` require notebook version, reference/target cell ID, and cell hash.
 
+`executeCell` requires notebook version, target cell ID, cell hash, and cell document version. `saveNotebook` requires the notebook version from the live snapshot that the caller intends to persist.
+
 Any mismatch returns `status: conflict` with `reason: STALE_SNAPSHOT`. Missing expectations return `MISSING_SNAPSHOT_EXPECTATION`. The bridge never force-applies or auto-merges a stale edit.
 
 ## Operations
@@ -36,12 +38,14 @@ Any mismatch returns `status: conflict` with `reason: STALE_SNAPSHOT`. Missing e
 - `status` reports enabled/trusted state and IPC root.
 - `list` reports live file-backed text documents and notebooks.
 - `readText` and `readNotebook` return live snapshots; `readNotebook` can opt into bounded live output inspection with `includeOutputs`.
+- `saveNotebook` explicitly saves one fresh, file-backed live notebook through `NotebookDocument.save()`. It never saves unrelated documents.
+- `executeCell` explicitly asks VS Code to run one fresh code cell in a Microsoft Jupyter notebook. Before invoking VS Code's Run Cell path, the bridge checks the Jupyter extension for a selected Python environment or an already-live Jupyter kernel; it never opens the kernel picker or chooses a kernel. A missing Jupyter extension returns `JUPYTER_EXTENSION_UNAVAILABLE`, unsupported notebook types return `UNSUPPORTED_NOTEBOOK_TYPE`, unavailable Jupyter kernel-state APIs return `JUPYTER_KERNEL_STATE_UNAVAILABLE`, and no selected/live Jupyter kernel returns `NO_SELECTED_JUPYTER_KERNEL`. Because that preflight can yield while Jupyter activates, the bridge revalidates the notebook/cell snapshot immediately before execution. A successful response contains `execution.completed`, derived `execution.success`, optional execution order, the bounded live notebook snapshot with outputs, and the executed cell snapshot. The default execution timeout is 30 seconds and the accepted range is 1–300 seconds. A timeout returns `EXECUTION_TIMEOUT`; it is a watchdog, not proof that a kernel-side computation was cancelled. If VS Code returns without observable execution-summary or output change, the bridge returns `EXECUTION_NOT_CONFIRMED`. Reread the notebook before deciding whether to retry.
 - `replaceText` replaces a UTF-16 offset range or the complete text.
 - `replaceCell` replaces one live notebook cell through `NotebookEdit.replaceCells`, preserving its metadata, outputs, execution summary, and bridge session cell ID.
 - `insertCell` inserts a code or Markdown cell before or after a fresh reference cell.
 - `deleteCell` deletes a fresh target cell.
 
-All edits use VS Code edit APIs and remain unsaved. Visible text edits receive explicit undo stops; notebook edits participate in the notebook undo stack. The protocol provides no save, process execution, network, model, Git, or notebook-execution operation.
+Edits use VS Code edit APIs and remain unsaved until an explicit `saveNotebook` request. Visible text edits receive explicit undo stops; notebook edits participate in the notebook undo stack. `executeCell` is the only execution operation and is scoped to a fresh live notebook code cell; the protocol provides no general process/shell command, network, model, or Git operation.
 
 ## Target policy
 

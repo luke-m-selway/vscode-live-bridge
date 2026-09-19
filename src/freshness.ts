@@ -7,6 +7,11 @@ export function checkTextFreshness(expected: SnapshotExpectation | undefined, ve
   return expected.documentVersion === version && expected.documentHash === sha256(text) ? 'fresh' : 'stale';
 }
 
+export function checkNotebookFreshness(expected: SnapshotExpectation | undefined, version: number): Freshness {
+  if (expected?.notebookVersion === undefined) return 'missing';
+  return expected.notebookVersion === version ? 'fresh' : 'stale';
+}
+
 export function checkCellFreshness(
   expected: SnapshotExpectation | undefined,
   notebookVersion: number,

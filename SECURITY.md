@@ -12,7 +12,8 @@ VS Code Live Bridge is local same-user IPC, not an authentication boundary.
 - The IPC root defaults to `~/.vscode-live-bridge/` and uses user-only POSIX permissions where supported.
 - While the bridge is enabled, another process already running as the same operating-system user may be able to submit bridge requests.
 - Editor operations require a trusted VS Code workspace and are limited to files in that workspace or files already open in the extension host.
-- Requests can read live unsaved document content and can edit eligible buffers through VS Code APIs.
+- Requests can read live unsaved document content, edit eligible buffers, explicitly save one targeted notebook, and explicitly execute one fresh notebook code cell through VS Code APIs.
+- `execute-cell` is code execution: the already-selected Microsoft Jupyter kernel and cell code can read/write files, access networks, launch subprocesses, or cause other effects exactly as when the user runs that cell manually. The bridge refuses execution when it cannot confirm selected/live Jupyter kernel state and does not provide a separate arbitrary shell/command endpoint.
 - Logs contain request metadata and target paths, but not document contents.
 
 Do not enable the bridge in a local environment where same-user processes are not trusted.
@@ -25,4 +26,4 @@ Use GitHub's private vulnerability reporting / Security Advisory flow for this r
 
 Useful reports include the affected version or commit, operating system, VS Code version, reproduction steps, security impact, and whether the issue crosses one of the documented trust boundaries.
 
-Examples of security-relevant issues include workspace-boundary bypasses, unsafe path handling, request-queue permission failures, stale-snapshot bypasses that overwrite newer user edits, unintended process/network execution, or document contents being written to logs.
+Examples of security-relevant issues include workspace-boundary bypasses, unsafe path handling, request-queue permission failures, stale-snapshot bypasses that save/execute/overwrite newer user state, execution of a cell other than the explicitly fresh target, unexpected execution outside the documented notebook-cell operation, or document contents being written to logs.

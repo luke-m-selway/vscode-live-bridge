@@ -1,6 +1,6 @@
 # VS Code Live Bridge
 
-A local, agent-agnostic bridge for reading and editing the live in-memory state of trusted VS Code workspaces. It contains no model, provider, chat, execution, Git, or network integration.
+A local, agent-agnostic bridge for reading, editing, explicitly executing notebook cells, and explicitly saving live in-memory state in trusted VS Code workspaces. It contains no model, provider, chat, Git, network, or general shell/command integration.
 
 The VS Code extension owns editor state and applies edits through VS Code APIs. The `vscode-live-bridge` CLI writes local filesystem requests to `~/.vscode-live-bridge/` and waits for responses. Protocol details are defined in [`docs/protocol.md`](docs/protocol.md).
 
@@ -20,7 +20,7 @@ VS Code is a Microsoft product. This project is independent and is not affiliate
 npm install
 npm run compile
 npm run package
-code --install-extension vscode-live-bridge-0.1.0.vsix
+code --install-extension vscode-live-bridge-0.2.0.vsix
 npm run install-cli
 ```
 
@@ -38,9 +38,11 @@ vscode-live-bridge list
 vscode-live-bridge read path/to/file.md
 vscode-live-bridge read-notebook path/to/notebook.ipynb
 vscode-live-bridge read-notebook path/to/notebook.ipynb --include-outputs
+vscode-live-bridge execute-cell path/to/notebook.ipynb --notebook-version <version> --cell-id <id> --cell-hash <sha256> --document-version <version>
+vscode-live-bridge save-notebook path/to/notebook.ipynb --notebook-version <version>
 ```
 
-`read-notebook --include-outputs` adds the current live code-cell outputs and execution summary without executing cells. Output transport is bounded; inspect the top-level `outputRead.truncated` field before assuming the returned outputs are complete. Exact output fields and limits are defined in [`docs/protocol.md`](docs/protocol.md).
+`read-notebook --include-outputs` adds the current live code-cell outputs and execution summary without executing cells. `execute-cell` is a separate, explicit Microsoft Jupyter action that requires the exact fresh cell snapshot and a Jupyter kernel/controller already selected by the user or notebook environment; the bridge never opens the kernel picker, chooses a kernel, or saves after execution. `save-notebook` is also separate and saves only the requested fresh notebook through VS Code. Output transport is bounded; inspect the top-level `outputRead.truncated` field before assuming the returned outputs are complete. Exact fields, freshness rules, kernel-state errors, and execution limits are defined in [`docs/protocol.md`](docs/protocol.md).
 
 Text edits require the `version` and `hash` returned by the preceding read:
 
@@ -86,11 +88,11 @@ Every edit must carry the snapshot it was based on. A changed document version/h
 
 The bridge never auto-merges stale edits. The caller must reread and decide how to retry.
 
-No bridge operation saves a document. Edits therefore remain dirty and participate in normal VS Code Undo through VS Code edit APIs.
+Edits and cell execution do not save automatically. They remain dirty until the user or an explicit fresh `save-notebook` request saves that notebook. Bridge edits participate in normal VS Code Undo through VS Code edit APIs.
 
 ## Security
 
-The bridge has no network listener, telemetry, cloud dependency, API key, model invocation, shell execution, or arbitrary command operation. The IPC root is created with user-only permissions where the platform supports POSIX modes. Targets must either belong to the current trusted workspace or already be open in VS Code. When the bridge is disabled, non-status requests are rejected.
+The bridge has no network listener, telemetry, cloud dependency, API key, model invocation, general shell execution, or arbitrary command operation. `execute-cell` intentionally runs the already-present code of one fresh live notebook cell through VS Code's notebook controller, so that notebook code has the same side-effect capabilities it would have when run manually. The IPC root is created with user-only permissions where the platform supports POSIX modes. Targets must either belong to the current trusted workspace or already be open in VS Code. When the bridge is disabled, non-status requests are rejected.
 
 The bridge is a **same-user local IPC** mechanism: any process already running as the same operating-system user may be able to submit requests while the bridge is enabled. Only enable it in workspaces and local environments you trust. Request logs at `~/.vscode-live-bridge/logs/bridge.log` contain file paths and request metadata, but not document contents.
 
@@ -114,7 +116,7 @@ rm -rf ~/.vscode-live-bridge
 
 `npm test` runs deterministic protocol, IPC-permission, hash, and freshness tests. `npm run test:vscode` runs the end-to-end acceptance suite in an isolated VS Code Extension Development Host and requires the VS Code Jupyter extension to be installed locally so the runner can expose its notebook serializer.
 
-The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook source/output reads, cell replacement and Undo, chained notebook edits from returned stabilized snapshots, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
+The extension-host suite covers live unsaved text reads, in-place text edits and Undo, live notebook source/output reads, rejection when no Jupyter kernel is selected, real Microsoft Jupyter/Python execution without autosave, execution success/error output, explicit targeted notebook save, cell replacement and Undo, chained notebook edits from returned stabilized snapshots, stale-snapshot rejection, structural insert/delete and Undo, trusted-path enforcement, disabled behavior, and ordinary-shell CLI use.
 
 ## External-tool integration
 
