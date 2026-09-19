@@ -17,10 +17,13 @@ async function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: n
   });
 }
 
-test('CLI help documents opt-in notebook output reads', async () => {
+test('CLI help documents notebook output, save, and execution operations', async () => {
   const result = await runCli(['--help'], process.env);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /read-notebook <notebook> \[--include-outputs\]/);
+  assert.match(result.stdout, /save-notebook <notebook> --notebook-version <version>/);
+  assert.match(result.stdout, /execute-cell <notebook> --notebook-version <version>/);
+  assert.match(result.stdout, /--execution-timeout <ms>/);
 });
 
 test('CLI timeout removes an unclaimed request instead of leaving a delayed edit queued', async () => {

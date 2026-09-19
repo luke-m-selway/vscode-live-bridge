@@ -1,8 +1,8 @@
 {
   "name": "vscode-live-bridge",
   "displayName": "VS Code Live Bridge",
-  "description": "Local filesystem bridge for conflict-aware reading and editing of live VS Code buffers from external tools.",
-  "version": "0.1.0",
+  "description": "Local filesystem bridge for conflict-aware reading, editing, explicit notebook execution, and targeted saving of live VS Code buffers from external tools.",
+  "version": "0.2.0",
   "publisher": "luke-m-selway",
   "license": "SEE LICENSE IN LICENSE",
   "repository": { "type": "git", "url": "https://github.com/luke-m-selway/vscode-live-bridge.git" },

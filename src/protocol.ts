@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto';
 
 export const PROTOCOL_VERSION = 1 as const;
+export const DEFAULT_EXECUTION_TIMEOUT_MS = 30_000;
+export const MAX_EXECUTION_TIMEOUT_MS = 300_000;
 
 export type Operation =
   | 'status'
   | 'list'
   | 'readText'
   | 'readNotebook'
+  | 'saveNotebook'
+  | 'executeCell'
   | 'replaceText'
   | 'replaceCell'
   | 'insertCell'
@@ -80,7 +84,7 @@ export function sha256(value: string): string {
 export function isBridgeRequest(value: unknown): value is BridgeRequest {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  const operations: Operation[] = ['status', 'list', 'readText', 'readNotebook', 'replaceText', 'replaceCell', 'insertCell', 'deleteCell'];
+  const operations: Operation[] = ['status', 'list', 'readText', 'readNotebook', 'saveNotebook', 'executeCell', 'replaceText', 'replaceCell', 'insertCell', 'deleteCell'];
   return v.protocolVersion === PROTOCOL_VERSION
     && typeof v.id === 'string'
     && operations.includes(v.operation as Operation);

@@ -1,6 +1,6 @@
 ---
 name: vscode-live-bridge
-description: Safely inspect and edit live unsaved VS Code text and notebook buffers through the vscode-live-bridge CLI using freshness snapshots and conflict-aware retries.
+description: Safely inspect, edit, explicitly execute notebook cells, and explicitly save live VS Code buffers through the vscode-live-bridge CLI using freshness snapshots and conflict-aware retries.
 ---
 
 # VS Code Live Bridge
@@ -19,9 +19,9 @@ This skill owns the agent operating procedure. The exact request/response contra
 
 Ordinary repository or filesystem tools remain appropriate when live VS Code state is not material. Do not use them as a fallback to bypass this skill when unsaved editor state must be preserved.
 
-## Read before every edit
+## Read before state-changing actions
 
-Always obtain a fresh live snapshot before constructing an edit.
+Always obtain a fresh live snapshot before constructing an edit, executing a cell, or saving a notebook.
 
 - For text, use `read` and retain the returned document `version` and `hash`.
 - For notebooks, use `read-notebook` and identify the target by the returned session-stable `cellId`, not by index alone. When existing rendered/executed output matters, use `read-notebook --include-outputs`; this reads live VS Code output state and never executes cells. If `outputRead.truncated` is true, treat the output read as incomplete rather than inferring that omitted output is absent.
@@ -35,6 +35,8 @@ Every write must carry the snapshot expectations required by the protocol.
 - Text replacement requires the document version and document hash from the preceding live read.
 - Notebook cell replacement requires the notebook version, target cell ID, target cell hash, and target cell document version.
 - Notebook insertion or deletion requires the notebook version plus the reference/target cell ID and cell hash.
+- Notebook cell execution requires the notebook version, target cell ID, target cell hash, and target cell document version.
+- Notebook save requires the notebook version from the live snapshot that the caller intends to persist.
 
 Do not omit, weaken, fabricate, or reuse stale expectations to make an edit apply.
 
@@ -58,13 +60,15 @@ Use the bridge notebook operations for live notebook changes. Do not rewrite an 
 
 The extension applies cell replacement, insertion, and deletion through VS Code notebook edit APIs. Bridge edits remain unsaved, preserve the normal dirty state, and participate in VS Code Undo. Cell replacement preserves bridge-relevant cell identity plus notebook metadata/outputs/execution summary as defined by the implementation. After each successful notebook mutation, the bridge waits briefly for provider-driven version changes to quiesce before returning its post-edit snapshot.
 
-The bridge does not execute cells, run a kernel, save notebooks, or expose a general command/shell channel. Do not add those behaviors in a downstream integration.
+Cell execution and notebook save are explicit bridge operations, never implicit side effects of reads or edits. `execute-cell` is scoped to Microsoft Jupyter notebooks: it runs only the identified fresh code cell after confirming Jupyter already has a selected Python environment or live kernel, and must not be used as a substitute general shell channel; it does not save. If the bridge reports `NO_SELECTED_JUPYTER_KERNEL`, select the intended kernel in VS Code/Jupyter and reread before retrying. `save-notebook` saves only the identified fresh notebook through VS Code and never performs Save All. The bridge never opens the kernel picker or chooses a kernel for the caller.
+
+Treat notebook code execution as real code execution: use it only when running that live cell is within the task's authority. After `execute-cell`, inspect the returned/live outputs before making dependent decisions. On `EXECUTION_TIMEOUT`, do not blindly retry; reread the notebook/output state first because the timeout does not prove kernel-side work was cancelled.
 
 ## Preserve user state and Undo
 
 Make the smallest edit that satisfies the task and preserve unrelated live user changes.
 
-- Do not save as part of a bridge edit unless a separate workflow explicitly requires and owns saving.
+- Do not save as part of a bridge edit or execution. Use `save-notebook` only as a separate deliberate step after the intended live state is ready to persist.
 - Do not combine a successful bridge edit with a direct disk rewrite of the same open document.
 - Keep bridge edits reversible through normal VS Code Undo.
 - If a user edit appears between read and write, rely on freshness rejection and reconcile from a new read rather than overwriting it.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkCellFreshness, checkTextFreshness } from '../src/freshness';
+import { checkCellFreshness, checkNotebookFreshness, checkTextFreshness } from '../src/freshness';
 import { sha256 } from '../src/protocol';
 
 test('text edits require and validate both version and hash', () => {
@@ -19,4 +19,11 @@ test('cell edits reject notebook, identity, hash, and document-version drift', (
   assert.equal(checkCellFreshness(expected, 7, 'cell-b', source, 4, true), 'stale');
   assert.equal(checkCellFreshness(expected, 7, 'cell-a', 'changed', 4, true), 'stale');
   assert.equal(checkCellFreshness(expected, 7, 'cell-a', source, 5, true), 'stale');
+});
+
+
+test('notebook actions require and validate notebook version', () => {
+  assert.equal(checkNotebookFreshness(undefined, 5), 'missing');
+  assert.equal(checkNotebookFreshness({ notebookVersion: 5 }, 5), 'fresh');
+  assert.equal(checkNotebookFreshness({ notebookVersion: 4 }, 5), 'stale');
 });

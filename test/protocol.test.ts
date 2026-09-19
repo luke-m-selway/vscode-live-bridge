@@ -8,6 +8,8 @@ test('sha256 is deterministic', () => {
 
 test('request guard validates the protocol envelope and operation', () => {
   assert.equal(isBridgeRequest({ protocolVersion: 1, id: 'x', operation: 'status' }), true);
+  assert.equal(isBridgeRequest({ protocolVersion: 1, id: 'x', operation: 'saveNotebook' }), true);
+  assert.equal(isBridgeRequest({ protocolVersion: 1, id: 'x', operation: 'executeCell' }), true);
   assert.equal(isBridgeRequest({ protocolVersion: 2, id: 'x', operation: 'status' }), false);
   assert.equal(isBridgeRequest({ protocolVersion: 1, id: 'x', operation: 'shell' }), false);
 });

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
 interface CliResult {
@@ -110,6 +111,164 @@ export async function run(): Promise<void> {
   await vscode.window.showNotebookDocument(notebook);
   assert.ok(notebook.cellCount >= 2);
 
+  let nonJupyterExecutions = 0;
+  const nonJupyterController = vscode.notebooks.createNotebookController(
+    'bridge-non-jupyter-controller',
+    notebook.notebookType,
+    'Bridge Non-Jupyter Controller',
+    async () => { nonJupyterExecutions += 1; }
+  );
+  nonJupyterController.supportedLanguages = ['python'];
+  const nonJupyterSelected = await vscode.commands.executeCommand<boolean>('_notebook.selectKernel', {
+    id: nonJupyterController.id,
+    extension: 'luke-m-selway.vscode-live-bridge'
+  });
+  assert.equal(nonJupyterSelected, true, 'non-Jupyter controller must be selected for guard acceptance');
+  await sleep(300);
+
+  cli = await runCli(['read-notebook', notebookPath]);
+  assert.equal(cli.response.status, 'ok');
+  const guardedSnap = cli.response.result;
+  const guardedCell = guardedSnap.cells[0];
+  cli = await runCli([
+    'execute-cell', notebookPath,
+    '--notebook-version', String(guardedSnap.version),
+    '--cell-id', guardedCell.cellId,
+    '--cell-hash', guardedCell.hash,
+    '--document-version', String(guardedCell.documentVersion),
+    '--execution-timeout', '5000'
+  ]);
+  assert.equal(cli.code, 1);
+  assert.equal(cli.response.reason, 'NO_SELECTED_JUPYTER_KERNEL');
+  assert.equal(nonJupyterExecutions, 0, 'bridge must not execute through a non-Jupyter controller');
+  nonJupyterController.dispose();
+
+  const pythonExtension = vscode.extensions.getExtension<any>('ms-python.python');
+  assert.ok(pythonExtension, 'Python extension must be available for real Jupyter acceptance');
+  const pythonApi = await pythonExtension.activate();
+  const activeEnvironmentPath = pythonApi.environments.getActiveEnvironmentPath(workspace.uri);
+  let resolvedEnvironment = await pythonApi.environments.resolveEnvironment(activeEnvironmentPath);
+  if (!resolvedEnvironment?.executable?.uri) {
+    resolvedEnvironment = await pythonApi.environments.resolveEnvironment('/usr/local/bin/python3');
+  }
+  assert.ok(resolvedEnvironment?.executable?.uri, 'a runnable Python environment is required for Jupyter acceptance');
+
+  const jupyterExtension = vscode.extensions.getExtension<any>('ms-toolsai.jupyter');
+  assert.ok(jupyterExtension, 'Jupyter extension must be available for real execution acceptance');
+  const jupyterApi = await jupyterExtension.activate();
+  await jupyterApi.ready;
+  await jupyterApi.openNotebook(notebook.uri, {
+    id: resolvedEnvironment.id,
+    path: resolvedEnvironment.executable.uri.fsPath
+  });
+  await sleep(1500);
+  assert.ok(
+    await jupyterApi.getPythonEnvironment(notebook.uri),
+    'real Jupyter controller must be selected explicitly by acceptance setup'
+  );
+
+  cli = await runCli(['read-notebook', notebookPath]);
+  assert.equal(cli.response.status, 'ok');
+  const stageSnap = cli.response.result;
+  const stageCell = stageSnap.cells[0];
+  cli = await runCli([
+    'replace-cell', notebookPath,
+    '--notebook-version', String(stageSnap.version),
+    '--cell-id', stageCell.cellId,
+    '--cell-hash', stageCell.hash,
+    '--document-version', String(stageCell.documentVersion),
+    '--text', "print('bridge-real-jupyter-qualification')"
+  ]);
+  assert.equal(cli.code, 0);
+  let executionSnap = cli.response.result;
+  let executionCell = executionSnap.cells[0];
+  const diskBeforeExecution = await readFile(notebookPath, 'utf8');
+  assert.doesNotMatch(diskBeforeExecution, /bridge-real-jupyter-qualification/);
+  cli = await runCli([
+    'execute-cell', notebookPath,
+    '--notebook-version', String(executionSnap.version),
+    '--cell-id', executionCell.cellId,
+    '--cell-hash', executionCell.hash,
+    '--document-version', String(executionCell.documentVersion),
+    '--execution-timeout', '60000'
+  ]);
+  assert.equal(cli.code, 0, JSON.stringify(cli.response));
+  assert.equal(cli.response.status, 'ok');
+  assert.equal(cli.response.result.execution.completed, true);
+  assert.equal(cli.response.result.execution.success, true);
+  assert.match(
+    cli.response.result.cell.outputs.map((group: any) => group.items.map((item: any) => item.data ?? '').join('')).join(''),
+    /bridge-real-jupyter-qualification/
+  );
+  assert.equal(notebook.isDirty, true, 'execution output must remain unsaved');
+  assert.equal(await readFile(notebookPath, 'utf8'), diskBeforeExecution, 'execution must not save the notebook');
+
+  cli = await runCli(['read-notebook', notebookPath, '--include-outputs']);
+  assert.equal(cli.response.status, 'ok');
+  assert.match(
+    cli.response.result.cells[0].outputs.map((group: any) => group.items.map((item: any) => item.data ?? '').join('')).join(''),
+    /bridge-real-jupyter-qualification/
+  );
+
+  const failureStageSnap = cli.response.result;
+  const failureStageCell = failureStageSnap.cells[0];
+  cli = await runCli([
+    'replace-cell', notebookPath,
+    '--notebook-version', String(failureStageSnap.version),
+    '--cell-id', failureStageCell.cellId,
+    '--cell-hash', failureStageCell.hash,
+    '--document-version', String(failureStageCell.documentVersion),
+    '--text', "raise RuntimeError('bridge execution failure')"
+  ]);
+  assert.equal(cli.code, 0);
+  const failingSnap = cli.response.result;
+  const failingCell = failingSnap.cells[0];
+  cli = await runCli([
+    'execute-cell', notebookPath,
+    '--notebook-version', String(failingSnap.version),
+    '--cell-id', failingCell.cellId,
+    '--cell-hash', failingCell.hash,
+    '--document-version', String(failingCell.documentVersion),
+    '--execution-timeout', '60000'
+  ]);
+  assert.equal(cli.code, 0, JSON.stringify(cli.response));
+  assert.equal(cli.response.result.execution.completed, true);
+  assert.equal(cli.response.result.execution.success, false);
+  assert.match(
+    cli.response.result.cell.outputs.map((group: any) => group.items.map((item: any) => item.data ?? '').join('')).join(''),
+    /bridge execution failure/
+  );
+
+  executionSnap = cli.response.result.notebook;
+  executionCell = executionSnap.cells[0];
+  await replaceLiveText(notebook.cellAt(0).document, `${notebook.cellAt(0).document.getText()}\n# stale execution guard`);
+  cli = await runCli([
+    'execute-cell', notebookPath,
+    '--notebook-version', String(executionSnap.version),
+    '--cell-id', executionCell.cellId,
+    '--cell-hash', executionCell.hash,
+    '--document-version', String(executionCell.documentVersion),
+    '--execution-timeout', '60000'
+  ]);
+  assert.equal(cli.code, 3);
+  assert.equal(cli.response.status, 'conflict');
+  assert.equal(cli.response.reason, 'STALE_SNAPSHOT');
+
+  cli = await runCli(['read-notebook', notebookPath]);
+  const markdownExecutionSnap = cli.response.result;
+  const markdownCell = markdownExecutionSnap.cells.find((cell: any) => cell.kind === 'markdown');
+  assert.ok(markdownCell);
+  cli = await runCli([
+    'execute-cell', notebookPath,
+    '--notebook-version', String(markdownExecutionSnap.version),
+    '--cell-id', markdownCell.cellId,
+    '--cell-hash', markdownCell.hash,
+    '--document-version', String(markdownCell.documentVersion),
+    '--execution-timeout', '5000'
+  ]);
+  assert.equal(cli.code, 1);
+  assert.equal(cli.response.reason, 'CELL_NOT_EXECUTABLE');
+
   const outputCell = notebook.cellAt(0);
   const outputData = new vscode.NotebookCellData(outputCell.kind, outputCell.document.getText(), outputCell.document.languageId);
   outputData.metadata = outputCell.metadata;
@@ -155,6 +314,39 @@ export async function run(): Promise<void> {
   assert.match(cli.response.result.cells[0].outputs[2].items[0].data, /live boom/);
   assert.equal(cli.response.result.cells[0].outputs[3].items[0].encoding, 'base64');
   assert.equal(cli.response.result.cells[0].outputs[3].items[0].data, 'iVBORw==');
+
+  const saveTarget = notebook.cellAt(0);
+  await replaceLiveText(saveTarget.document, "print('bridge save target')");
+  const diskBeforeSave = await readFile(notebookPath, 'utf8');
+  assert.doesNotMatch(diskBeforeSave, /bridge save target/);
+  cli = await runCli(['read-notebook', notebookPath]);
+  const saveSnap = cli.response.result;
+  assert.equal(notebook.isDirty, true);
+  assert.equal(textDoc.isDirty, true);
+  cli = await runCli([
+    'save-notebook', notebookPath,
+    '--notebook-version', String(saveSnap.version)
+  ]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.response.status, 'ok');
+  assert.equal(cli.response.result.isDirty, false);
+  assert.equal(notebook.isDirty, false);
+  assert.equal(textDoc.isDirty, true, 'targeted notebook save must not save unrelated dirty text');
+  assert.match(await readFile(notebookPath, 'utf8'), /bridge save target/);
+
+  await replaceLiveText(notebook.cellAt(0).document, "print('stale save base')");
+  cli = await runCli(['read-notebook', notebookPath]);
+  const staleSaveSnap = cli.response.result;
+  await replaceLiveText(notebook.cellAt(0).document, "print('stale save changed')");
+  cli = await runCli([
+    'save-notebook', notebookPath,
+    '--notebook-version', String(staleSaveSnap.version)
+  ]);
+  assert.equal(cli.code, 3);
+  assert.equal(cli.response.status, 'conflict');
+  assert.equal(cli.response.reason, 'STALE_SNAPSHOT');
+  assert.equal(notebook.isDirty, true);
+  assert.doesNotMatch(await readFile(notebookPath, 'utf8'), /stale save changed/);
 
   const first = notebook.cellAt(0);
   await replaceLiveText(first.document, "print('manual')");

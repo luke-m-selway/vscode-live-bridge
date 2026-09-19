@@ -3,11 +3,13 @@ import { promises as fs, watch as watchFs, FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { atomicWriteJson, bridgePaths, ensureBridgeDirs } from './ipc';
-import { BridgeRequest, BridgeResponse, isBridgeRequest, PROTOCOL_VERSION, ReadNotebookParams, sha256 } from './protocol';
-import { checkCellFreshness, checkTextFreshness } from './freshness';
+import { BridgeRequest, BridgeResponse, DEFAULT_EXECUTION_TIMEOUT_MS, isBridgeRequest, MAX_EXECUTION_TIMEOUT_MS, PROTOCOL_VERSION, ReadNotebookParams, sha256 } from './protocol';
+import { checkCellFreshness, checkNotebookFreshness, checkTextFreshness } from './freshness';
 import { createNotebookOutputBudget, notebookOutputSummary, serializeNotebookOutputGroups } from './notebookOutputs';
 
 const ENABLED_KEY = 'vscodeLiveBridge.enabled';
+const JUPYTER_EXTENSION_ID = 'ms-toolsai.jupyter';
+const JUPYTER_NOTEBOOK_TYPE = 'jupyter-notebook';
 // Notebook providers can emit follow-up version changes after applyEdit resolves.
 const NOTEBOOK_SETTLE_QUIET_MS = 150;
 const NOTEBOOK_SETTLE_TIMEOUT_MS = 1500;
@@ -141,6 +143,13 @@ function requireTextFresh(req: BridgeRequest, doc: vscode.TextDocument): BridgeR
   return undefined;
 }
 
+function requireNotebookFresh(req: BridgeRequest, notebook: vscode.NotebookDocument): BridgeResponse | undefined {
+  const freshness = checkNotebookFreshness(req.expected, notebook.version);
+  if (freshness === 'missing') return response(req.id, 'error', 'MISSING_SNAPSHOT_EXPECTATION');
+  if (freshness === 'stale') return response(req.id, 'conflict', 'STALE_SNAPSHOT');
+  return undefined;
+}
+
 function findExpectedCell(req: BridgeRequest, notebook: vscode.NotebookDocument): { cell?: vscode.NotebookCell; error?: BridgeResponse } {
   const expectedId = req.expected?.cellId;
   const cell = expectedId ? notebook.getCells().find(item => cellId(item) === expectedId) : undefined;
@@ -150,11 +159,38 @@ function findExpectedCell(req: BridgeRequest, notebook: vscode.NotebookDocument)
     cell ? cellId(cell) : undefined,
     cell?.document.getText(),
     cell?.document.version,
-    req.operation === 'replaceCell'
+    req.operation === 'replaceCell' || req.operation === 'executeCell'
   );
   if (freshness === 'missing') return { error: response(req.id, 'error', 'MISSING_SNAPSHOT_EXPECTATION') };
   if (freshness === 'stale' || !cell) return { error: response(req.id, 'conflict', 'STALE_SNAPSHOT') };
   return { cell };
+}
+
+async function requireSelectedJupyterKernel(req: BridgeRequest, notebook: vscode.NotebookDocument): Promise<BridgeResponse | undefined> {
+  if (notebook.notebookType !== JUPYTER_NOTEBOOK_TYPE) {
+    return response(req.id, 'error', 'UNSUPPORTED_NOTEBOOK_TYPE');
+  }
+  const extension = vscode.extensions.getExtension<any>(JUPYTER_EXTENSION_ID);
+  if (!extension) return response(req.id, 'error', 'JUPYTER_EXTENSION_UNAVAILABLE');
+
+  try {
+    const api = await extension.activate();
+    if (api?.ready) await api.ready;
+    const hasEnvironmentApi = typeof api?.getPythonEnvironment === 'function';
+    const environment = hasEnvironmentApi ? await api.getPythonEnvironment(notebook.uri) : undefined;
+    if (environment) return undefined;
+
+    const kernels = api?.kernels;
+    const hasKernelApi = typeof kernels?.getKernel === 'function';
+    if (!hasEnvironmentApi && !hasKernelApi) {
+      return response(req.id, 'error', 'JUPYTER_KERNEL_STATE_UNAVAILABLE');
+    }
+    const kernel = hasKernelApi ? await kernels.getKernel(notebook.uri) : undefined;
+    if (kernel) return undefined;
+    return response(req.id, 'error', 'NO_SELECTED_JUPYTER_KERNEL');
+  } catch {
+    return response(req.id, 'error', 'JUPYTER_KERNEL_STATE_UNAVAILABLE');
+  }
 }
 
 async function applyText(req: BridgeRequest): Promise<BridgeResponse> {
@@ -236,6 +272,91 @@ async function deleteCell(req: BridgeRequest): Promise<BridgeResponse> {
   return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
 }
 
+async function saveNotebook(req: BridgeRequest): Promise<BridgeResponse> {
+  if (!req.target) return response(req.id, 'error', 'TARGET_REQUIRED');
+  const notebook = await resolveNotebook(req.target);
+  const stale = requireNotebookFresh(req, notebook); if (stale) return stale;
+  if (notebook.isUntitled || notebook.uri.scheme !== 'file') return response(req.id, 'error', 'NOTEBOOK_NOT_FILE_BACKED');
+  if (!await notebook.save()) return response(req.id, 'error', 'SAVE_FAILED');
+  return response(req.id, 'ok', undefined, notebookSnapshot(notebook));
+}
+
+function outputFingerprint(cell: vscode.NotebookCell): string {
+  return JSON.stringify(cell.outputs.map(group => ({
+    metadata: group.metadata,
+    items: group.items.map(item => ({ mime: item.mime, data: Buffer.from(item.data).toString('base64') }))
+  })));
+}
+
+function hasExecutionError(cell: vscode.NotebookCell): boolean {
+  return cell.outputs.some(group => group.items.some(item => item.mime === 'application/vnd.code.notebook.error'));
+}
+
+async function executeNotebookCell(
+  notebook: vscode.NotebookDocument,
+  index: number,
+  timeoutMs: number
+): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      vscode.commands.executeCommand('notebook.cell.execute', {
+        ranges: [new vscode.NotebookRange(index, index + 1)],
+        document: notebook.uri,
+        autoReveal: false
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('EXECUTION_TIMEOUT')), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function executeCell(req: BridgeRequest): Promise<BridgeResponse> {
+  if (!req.target) return response(req.id, 'error', 'TARGET_REQUIRED');
+  const notebook = await resolveNotebook(req.target);
+  let found = findExpectedCell(req, notebook); if (found.error || !found.cell) return found.error!;
+  if (found.cell.kind !== vscode.NotebookCellKind.Code) return response(req.id, 'error', 'CELL_NOT_EXECUTABLE');
+  const kernelError = await requireSelectedJupyterKernel(req, notebook); if (kernelError) return kernelError;
+  // Kernel-state discovery can activate Jupyter and yield; revalidate immediately before running code.
+  found = findExpectedCell(req, notebook); if (found.error || !found.cell) return found.error!;
+  const cell = found.cell;
+  if (cell.kind !== vscode.NotebookCellKind.Code) return response(req.id, 'error', 'CELL_NOT_EXECUTABLE');
+  const index = notebook.getCells().indexOf(cell);
+  const beforeSummary = JSON.stringify(cell.executionSummary ?? null);
+  const beforeOutputs = outputFingerprint(cell);
+  const requestedTimeout = req.params?.timeoutMs;
+  const timeoutMs = requestedTimeout === undefined ? DEFAULT_EXECUTION_TIMEOUT_MS : Number(requestedTimeout);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > MAX_EXECUTION_TIMEOUT_MS) {
+    return response(req.id, 'error', 'INVALID_EXECUTION_TIMEOUT');
+  }
+  try {
+    await executeNotebookCell(notebook, index, timeoutMs);
+  } catch (error) {
+    return response(req.id, 'error', error instanceof Error ? error.message : 'EXECUTION_FAILED');
+  }
+  await waitForNotebookQuiescence(notebook);
+  const current = notebook.getCells().find(item => cellId(item) === req.expected?.cellId);
+  if (!current) return response(req.id, 'error', 'EXECUTED_CELL_MISSING');
+  const summaryChanged = JSON.stringify(current.executionSummary ?? null) !== beforeSummary;
+  const outputsChanged = outputFingerprint(current) !== beforeOutputs;
+  if (!summaryChanged && !outputsChanged) return response(req.id, 'error', 'EXECUTION_NOT_CONFIRMED');
+  const snapshot = notebookSnapshot(notebook, true);
+  const executed = snapshot.cells.find(item => item.cellId === req.expected?.cellId);
+  const success = current.executionSummary?.success ?? !hasExecutionError(current);
+  return response(req.id, 'ok', undefined, {
+    execution: {
+      completed: true,
+      success,
+      executionOrder: current.executionSummary?.executionOrder
+    },
+    notebook: snapshot,
+    cell: executed
+  });
+}
+
 async function handle(req: BridgeRequest, context: vscode.ExtensionContext): Promise<BridgeResponse> {
   if (req.operation === 'status') {
     return response(req.id, 'ok', undefined, {
@@ -267,6 +388,8 @@ async function handle(req: BridgeRequest, context: vscode.ExtensionContext): Pro
       }
       return response(req.id, 'ok', undefined, notebookSnapshot(await resolveNotebook(req.target), params?.includeOutputs === true));
     }
+    case 'saveNotebook': return saveNotebook(req);
+    case 'executeCell': return executeCell(req);
     case 'replaceText': return applyText(req);
     case 'replaceCell': return replaceCell(req);
     case 'insertCell': return insertCell(req);
